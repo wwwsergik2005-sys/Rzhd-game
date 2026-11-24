@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<title>РЖД: Опасный Зацеп 3D</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:sans-serif;color:#fff;position:fixed;inset:0;touch-action:none}
+  #canvas-container{position:fixed;inset:0;touch-action:none}
+  canvas{display:block;touch-action:none}
+
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.95);display:flex;flex-direction:column;justify-content:center;align-items:center;padding:20px;text-align:center;z-index:100;overflow-y:auto}
+  .overlay.hidden{display:none}
+  h1{color:#e31e24;font-size:24px;margin-bottom:10px}
+  p{max-width:90%;line-height:1.4;margin-bottom:8px;font-size:14px}
+  .warn{color:#ff6b6b;font-weight:bold;font-size:16px}
+  button.main{background:#e31e24;color:#fff;border:none;padding:15px 30px;font-size:16px;font-weight:bold;border-radius:8px;margin-top:15px}
+  button.main:active{background:#ff3030;transform:scale(0.95)}
+
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:5;display:none}
+  #hud.show{display:block}
+  .hud-box{position:absolute;background:rgba(0,0,0,0.75);padding:8px 12px;border-radius:8px;font-family:monospace;font-size:12px;border:1px solid rgba(255,255,255,0.15)}
+  #scoreBox{top:10px;left:10px}
+  #scoreBox b{color:#ffd700;font-size:20px;display:block;line-height:1.1}
+  #tbBox{top:10px;right:10px;width:140px}
+  #tbBar{height:14px;background:#333;border-radius:4px;overflow:hidden;margin-top:4px}
+  #tbFill{height:100%;width:0%;background:#4caf50}
+  #stateBox{bottom:110px;left:50%;transform:translateX(-50%);font-size:12px;background:rgba(0,0,0,0.7);padding:6px 12px;border-radius:6px}
+
+  #joystick{position:fixed;left:20px;bottom:20px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,0.1);border:2px solid rgba(255,255,255,0.3);z-index:20;display:none}
+  #joystick.show{display:block}
+  #joyKnob{position:absolute;left:50%;top:50%;width:50px;height:50px;margin:-25px 0 0 -25px;border-radius:50%;background:rgba(255,255,255,0.5);border:2px solid rgba(255,255,255,0.8);pointer-events:none}
+
+  #actions{position:fixed;right:20px;bottom:20px;display:none;flex-direction:column;gap:12px;z-index:20}
+  #actions.show{display:flex}
+  .act-btn{width:76px;height:76px;border-radius:50%;border:2px solid rgba(255,255,255,0.5);color:#fff;font-weight:bold;font-size:13px;display:flex;align-items:center;justify-content:center;text-align:center;padding:0;box-shadow:0 3px 12px rgba(0,0,0,0.5)}
+  .act-btn:active{transform:scale(0.92);filter:brightness(1.2)}
+  #grabBtn{background:rgba(255,152,0,0.85)}
+  #jumpBtn{background:rgba(76,175,80,0.85)}
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<!-- Экран меню -->
+<div id="disclaimer" class="overlay">
+  <h1>⚠️ РЖД: ОПАСНЫЙ ЗАЦЕП 3D ⚠️</h1>
+  <p class="warn">🚨 ЭТО ВСЕГО ЛИШЬ ИГРА! 🚨</p>
+  <p><b>НИКОГДА не повторяйте это в реальной жизни!</b></p>
+  <p>Джойстик слева — ходить. Свайп справа — камера. ЗАЦЕП — межку/крыша. ПРЫЖОК — спрыгнуть.</p>
+  <button class="main" id="startBtn">Я ПОНИМАЮ, ЧТО ЭТО ИГРА</button>
+</div>
+
+<!-- Экран смерти -->
+<div id="deathScreen" class="overlay hidden">
+  <h1>💀 ЗАЦЕП УБИВАЕТ 💀</h1>
+  <h2 id="deathReason"></h2>
+  <p>Счёт: <b id="deathScore" style="color:#ffd700;">0</b></p>
+  <button class="main" id="restartBtn">В МЕНЮ</button>
+</div>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="scoreBox" class="hud-box">ОЧКИ<b id="scoreVal">0</b></div>
+  <div id="tbBox" class="hud-box">⚠️ ТБ<div id="tbBar"><div id="tbFill"></div></div></div>
+  <div id="stateBox">на платформе</div>
+</div>
+
+<!-- Управление -->
+<div id="joystick"><div id="joyKnob"></div></div>
+<div id="actions">
+  <button class="act-btn" id="grabBtn">ЗАЦЕП</button>
+  <button class="act-btn" id="jumpBtn">ПРЫЖОК</button>
+</div>
+
+<!-- Подключаем Three.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// Сразу проверяем, загрузился ли движок
+if (typeof THREE === 'undefined') {
+    alert("ОШИБКА: 3D-движок (Three.js) не загрузился. Проверьте интернет или обновите страницу.");
+} else {
+    // Весь код игры внутри защиты
+    try {
+        var CAR_LENGTH=20, CAR_WIDTH=3, CAR_HEIGHT=3.4, CAR_BASE_Y=1.2, CAR_TOP_Y=CAR_BASE_Y+CAR_HEIGHT;
+        var TRACK_X=3.5, PLATFORM_EDGE_X=1.7, PLATFORM_MIN_X=-5, PLATFORM_LENGTH=120, P_MIN_Z=-60, P_MAX_Z=60;
+        var GRAVITY=25, JUMP_VEL=7, WALK_SPEED=5, EYE_PLATFORM=2.5, EYE_GAP=2.2, EYE_ROOF=5.5;
+
+        var TRAIN_TYPES=[
+            {name:'ЛАСТОЧКА', primary:0xe31e24, speed:6, cars:5, danger:1.0, scoreRate:10},
+            {name:'САПСАН', primary:0xf5f5f5, speed:9, cars:6, danger:1.8, scoreRate:18}
+        ];
+
+        var scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        var camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 600);
+        var renderer = new THREE.WebGLRenderer({ antialias:false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x404040, 1.2));
+        var sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(50, 80, 30); scene.add(sun);
+
+        // Мир
+        var ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshLambertMaterial({color:0x4a7a3a}));
+        ground.rotation.x = -Math.PI/2; scene.add(ground);
+        var platform = new THREE.Mesh(new THREE.BoxGeometry(6.7, 0.8, PLATFORM_LENGTH), new THREE.MeshLambertMaterial({color:0x9a9a9a}));
+        platform.position.set(-1.65, 0.4, 0); scene.add(platform);
+        var yellowLine = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.81, PLATFORM_LENGTH), new THREE.MeshBasicMaterial({color:0xffcc00}));
+        yellowLine.position.set(1.5, 0.405, 0); scene.add(yellowLine);
+
+        // Поезда
+        var trains = [];
+        function spawnTrain() {
+            var type = TRAIN_TYPES[Math.floor(Math.random()*TRAIN_TYPES.length)];
+            var group = new THREE.Group();
+            var totalL = type.cars * 20 + (type.cars-1);
+            for(var i=0; i<type.cars; i++) {
+                var carZ = -totalL/2 + 10 + i*21;
+                var body = new THREE.Mesh(new THREE.BoxGeometry(3, 3.4, 20), new THREE.MeshLambertMaterial({color:type.primary}));
+                body.position.set(0, 2.9, carZ); group.add(body);
+            }
+            group.position.z = -80;
+            scene.add(group);
+            trains.push({group:group, type:type, z:-80, totalL:totalL, startZ:-totalL/2});
+        }
+
+        function getGapZ(t, i) { return t.z + t.startZ + 20 + i*21 + 0.5; }
+        function getCarCenterZ(t, i) { return t.z + t.startZ + 10 + i*21; }
+
+        var state = { mode:'menu', pMode:'platform', pos:new THREE.Vector3(0, 2.5, 0), vel:new THREE.Vector3(), yaw:-Math.PI/2, pitch:0, tb:0, score:0, train:null, gapIdx:-1, carIdx:-1, moveX:0, moveZ:0 };
+
+        // Управление (Джойстик и Свайпы)
+        var joyTouch = null, lookTouch = null, joyRect;
+        document.getElementById('joystick').addEventListener('touchstart', function(e) {
+            e.preventDefault(); joyRect = this.getBoundingClientRect(); joyTouch = e.changedTouches[0];
+        }, {passive:false});
+        document.addEventListener('touchmove', function(e) {
+            if(joyTouch) {
+                var t = e.changedTouches[0]; // берем первый палец для джойстика
+                var cx = joyRect.left + joyRect.width/2, cy = joyRect.top + joyRect.height/2;
+                var dx = t.clientX - cx, dy = t.clientY - cy;
+                var dist = Math.sqrt(dx*dx + dy*dy);
+                if(dist > 50) { dx = dx/dist*50; dy = dy/dist*50; }
+                document.getElementById('joyKnob').style.transform = 'translate('+dx+'px,'+dy+'px)';
+                state.moveX = dx/50; state.moveZ = dy/50;
+            } else {
+                for(var i=0; i<e.changedTouches.length; i++) {
+                    var t = e.changedTouches[i];
+                    if(t.target.id === 'grabBtn' || t.target.id === 'jumpBtn') continue;
+                    if(lookTouch === null) { lookTouch = t; } 
+                    else if(lookTouch.identifier === t.identifier) {
+                        state.yaw -= (t.clientX - lookTouch.clientX) * 0.005;
+                        state.pitch -= (t.clientY - lookTouch.clientY) * 0.005;
+                        state.pitch = Math.max(-1.5, Math.min(1.5, state.pitch));
+                        lookTouch = t;
+                    }
+                }
+            }
+            e.preventDefault();
+        }, {passive:false});
+        document.addEventListener('touchend', function(e) {
+            joyTouch = null; lookTouch = null;
+            document.getElementById('joyKnob').style.transform = 'translate(0,0)';
+            state.moveX = 0; state.moveZ = 0;
+        });
+
+        // Кнопки
+        document.getElementById('grabBtn').addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            if(state.mode !== 'playing') return;
+            if(state.pMode === 'platform') {
+                var closest = null, minDist = 6;
+                trains.forEach(function(tr) {
+                    for(var i=0; i<tr.type.cars-1; i++) {
+                        var gz = getGapZ(tr, i), d = Math.abs(gz - state.pos.z);
+                        if(d < minDist) { minDist = d; closest = {t:tr, i:i, z:gz}; }
+                    }
+                });
+                if(closest) { state.pMode = 'gap'; state.train = closest.t; state.gapIdx = closest.i; state.pos.set(3.5, 2.2, closest.z); }
+            } else if(state.pMode === 'gap') {
+                state.pMode = 'roof'; state.carIdx = state.gapIdx; state.pos.set(3.5, 5.5, getCarCenterZ(state.train, state.carIdx));
+            } else {
+                state.pMode = 'gap'; state.pos.set(3.5, 2.2, getGapZ(state.train, state.gapIdx));
+            }
+        });
+        document.getElementById('jumpBtn').addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            if(state.mode !== 'playing') return;
+            if(state.pMode === 'platform') {
+                if(state.pos.y <= 2.5) state.vel.y = 7;
+            } else {
+                state.pMode = 'platform'; state.pos.set(0.5, 2.5, state.pos.z); state.vel.set(0,0,0); state.train = null;
+            }
+        });
+
+        // Запуск
+        window.startGame = function() {
+            document.getElementById('disclaimer').classList.add('hidden');
+            document.getElementById('hud').classList.add('show');
+            document.getElementById('joystick').classList.add('show');
+            document.getElementById('actions').classList.add('show');
+            state.mode = 'playing'; state.score = 0; state.tb = 0;
+            if(trains.length === 0) spawnTrain();
+        };
+
+        document.getElementById('startBtn').addEventListener('click', window.startGame);
+        document.getElementById('startBtn').addEventListener('touchstart', function(e){ e.preventDefault(); window.startGame(); });
+
+        document.getElementById('restartBtn').addEventListener('click', function() {
+            document.getElementById('deathScreen').classList.add('hidden');
+            window.startGame();
+        });
+
+        // Цикл
+        function update(dt) {
+            if(state.mode !== 'playing') return;
+            trains.forEach(function(t) {
+                t.z += t.type.speed * dt; t.group.position.z = t.z;
+                if(t.z - t.totalL/2 > 200) { scene.remove(t.group); trains.shift(); }
+            });
+            if(trains.length === 0) spawnTrain();
+
+            if(state.pMode === 'platform') {
+                var fx = -Math.sin(state.yaw), fz = -Math.cos(state.yaw);
+                var rx = Math.cos(state.yaw), rz = -Math.sin(state.yaw);
+                state.pos.x += (fx*(-state.moveZ) + rx*state.moveX) * WALK_SPEED * dt;
+                state.pos.z += (fz*(-state.moveZ) + rz*state.moveX) * WALK_SPEED * dt;
+                state.pos.x = Math.max(-4, Math.min(1.5, state.pos.x));
+                state.pos.z = Math.max(-58, Math.min(58, state.pos.z));
+                state.vel.y -= GRAVITY * dt; state.pos.y += state.vel.y * dt;
+                if(state.pos.y < 2.5) { state.pos.y = 2.5; state.vel.y = 0; }
+                state.tb = Math.max(0, state.tb - 5 * dt);
+            } else if(state.pMode === 'gap' && state.train) {
+                state.pos.set(3.5, 2.2, getGapZ(state.train, state.gapIdx));
+                state.tb += 3 * dt; state.score += 10 * dt;
+                if(state.tb >= 100) die('Слишком долго висел в межвагонье.');
+            } else if(state.pMode === 'roof' && state.train) {
+                state.pos.set(3.5, 5.5, getCarCenterZ(state.train, state.carIdx));
+                state.tb += 8 * dt; state.score += 25 * dt;
+                if(state.tb >= 100) die('⚡ Удар током 3000 вольт!');
+            }
+
+            camera.position.copy(state.pos); camera.rotation.set(state.pitch, state.yaw, 0);
+            document.getElementById('scoreVal').textContent = Math.floor(state.score);
+            document.getElementById('tbFill').style.width = Math.min(100, state.tb) + '%';
+        }
+
+        window.die = function(reason) {
+            state.mode = 'death';
+            document.getElementById('deathReason').textContent = reason;
+            document.getElementById('deathScore').textContent = Math.floor(state.score);
+            document.getElementById('deathScreen').classList.remove('hidden');
+            document.getElementById('hud').classList.remove('show');
+            document.getElementById('joystick').classList.remove('show');
+            document.getElementById('actions').classList.remove('show');
+        };
+
+        var last = performance.now();
+        function loop(now) {
+            var dt = Math.min((now - last)/1000, 0.05); last = now;
+            update(dt);
+            renderer.render(scene, camera);
+            requestAnimationFrame(loop);
+        }
+        requestAnimationFrame(loop);
+
+    } catch(e) {
+        alert("Ошибка запуска 3D: " + e.message);
+    }
+}
+</script>
+</body>
+                                                                                     </html>
